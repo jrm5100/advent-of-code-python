@@ -4,25 +4,29 @@
 # Load input #
 ##############
 
-incomplete_steps = set()  # incomplete steps, initalized to all steps
-requirements = dict()  # map steps to the required steps that must be completed first
-with open("input.txt", "r") as f:
-    for line in f:
-        step = line.split(' ')[7]
-        prerequisite = line.split(' ')[1]
+def load_input():
+    incomplete_steps = set()  # incomplete steps, initalized to all steps
+    requirements = dict()  # map steps to the required steps that must be completed first
+    with open("input.txt", "r") as f:
+        for line in f:
+            step = line.split(' ')[7]
+            prerequisite = line.split(' ')[1]
 
-        # Make sure both are recorded, in case a step is only on one side of the rules
-        incomplete_steps.add(step)
-        incomplete_steps.add(prerequisite)
+            # Make sure both are recorded, in case a step is only on one side of the rules
+            incomplete_steps.add(step)
+            incomplete_steps.add(prerequisite)
 
-        if step not in requirements:
-            requirements[step] = set(prerequisite)
-        else:
-            requirements[step].add(prerequisite)
+            if step not in requirements:
+                requirements[step] = set(prerequisite)
+            else:
+                requirements[step].add(prerequisite)
+    return requirements, incomplete_steps
 
 ##############
 # Solution 1 #
 ##############
+
+requirements, incomplete_steps = load_input()
 
 completed_steps = ""
 while len(incomplete_steps) > 0:
@@ -42,26 +46,50 @@ print(f"Solution to part 1 is {answer}")
 # Solution 2 #
 ##############
 
-def tick(i, workers, remaining_steps):
-    i += 1
-    for idx in range(5):
-        workers[idx] = (workers[idx][0], workers[idx][1] - 1)  # Current step, time left
-        if workers[idx][1] <= 0:
-            assigned_step = remaining_steps[0]
-            remaining_steps = remaining_steps[1:]
-            workers[idx] = (assigned_step, ord(assigned_step) - 64 + 60)  # ord(A) = 65
-    return i, workers, remaining_steps
+# I should look into writing a solution using async/await.
 
-remaining_steps = answer  # From answer 1
-i = 0
-workers = [(None, 0), (None, 0), (None, 0), (None, 0), (None, 0)]  # Step, time remaining
-while len(remaining_steps) > 0:
-    i, workers, remaining_steps = tick(i, workers, remaining_steps)
-    print(i, remaining_steps, workers)
+# Reload data since the original data was altered
+requirements, incomplete_steps = load_input()
+completed_steps = ""
+total_steps = len(incomplete_steps)
 
-# Add the longest remaining time
-print(i)
-i += max([w[1] for w in workers])
+# Initialize worker tracking
+seconds = 0
+worker_tasks = [None, None, None, None, None]  # Which task is being done by each worker
+worker_times = [0, 0, 0, 0, 0]  # Time remaining for current task for each worker
 
-answer = i
+while len(completed_steps) < total_steps:
+    # Pass the minimum time needed to free at least one worker
+    nonzero_times = [n for n in worker_times if n != 0]  # Must ignore 0 as the minimum to avoid freezing time
+    if len(nonzero_times) > 0:  # If all are zero the list will be empty and min() would return an error
+        min_time_left = min(nonzero_times)
+        seconds += min_time_left
+        worker_times = [n-min_time_left if n > 0 else 0 for n in worker_times]
+
+    # Process any completed jobs after this time has passed
+    for idx in range(len(worker_tasks)):
+        # Process available workers
+        if worker_times[idx] == 0:
+            if worker_tasks[idx] != None:
+                # Mark the completed step (if there is one)
+                completed_step = worker_tasks[idx]
+                worker_tasks[idx] = None
+                completed_steps += completed_step
+                # Update requirements to remove the completed step
+                requirements = {k:(v - set(completed_step)) for k,v in requirements.items()}
+
+    # Get currently available tasks
+    available_steps = set([step for step in incomplete_steps if len(requirements.get(step, set())) == 0])
+            
+    # Assign next alphabetical steps if possible
+    for idx in range(len(worker_tasks)):
+        if worker_tasks[idx] is None and len(available_steps) > 0:
+            next_job = sorted(available_steps)[0]  # Get job
+            worker_tasks[idx] = next_job  # Assign job
+            incomplete_steps.remove(next_job)  # Remove job from incomplete steps
+            available_steps.remove(next_job)  # Remove job from current list of available steps so subsequent workers don't use it this round
+            next_job_time = ord(next_job) - 64 + 60  # ord("A") = 65 so next_job_time = 65 - 64 + 60 = 61
+            worker_times[idx] = next_job_time  # Add time remaining for this new step
+
+answer = seconds
 print(f"Solution to part 2 is {answer}")
