@@ -1,3 +1,4 @@
+ 
 #!/usr/bin/python3
 
 from queue import Queue
@@ -7,7 +8,8 @@ from queue import Queue
 ##############
 
 class Character:
-    def __init__(self, x, y, kind, grid):
+    def __init__(self, idx, x, y, kind, elf_attack_power, grid):
+        self.idx = idx
         self.x = x
         self.y = y
         self.kind = kind
@@ -19,8 +21,12 @@ class Character:
         self.hitpoints = 200
         self.attack_power = 3
 
+        # Modified elf attack power
+        if self.kind == 'E':
+            self.attack_power = elf_attack_power
+
     def __repr__(self):
-        return f"{self.kind} at {self.x},{self.y} with {self.hitpoints}hp"
+        return f"Character {self.idx} = {self.kind} at {self.x},{self.y} with {self.hitpoints}hp"
 
     def __lt__(self, other):
         return self.y < other.y or (self.y == other.y and self.x < other.x)
@@ -39,10 +45,10 @@ class Character:
     def get_surroundings(self):
         """Return surroundings in reading order (up, left, right, down)"""
         return [
-            self.grid[self.y + 1][self.x],
+            self.grid[self.y - 1][self.x],
             self.grid[self.y][self.x - 1],
             self.grid[self.y][self.x + 1],
-            self.grid[self.y - 1][self.x]
+            self.grid[self.y + 1][self.x]
             ]
 
     def find_targets(self):
@@ -81,7 +87,7 @@ class Character:
         if len(surrounding_chars) == 0:
             return
         # Attack the min-health character in reading order by selecting the first one with hitpoints == minimum
-        target = [c for c in surrounding_chars if c.hitpoints == min([c.hitpoints for x in surrounding_chars])][0]
+        target = [c for c in surrounding_chars if c.hitpoints == min([c.hitpoints for c in surrounding_chars])][0]
         self.grid[target.y][target.x][1].hitpoints -= self.attack_power
         if self.grid[target.y][target.x][1].hitpoints <= 0:
             self.grid[target.y][target.x][1] = None  
@@ -92,8 +98,15 @@ class Character:
         q = Queue()
         q.put([(self.x, self.y)])
         visited = set((self.x, self.y))
+        shortest_complete_paths = []
         while not q.empty():
+            # Get a new path to extend
             current_path = q.get()
+            # Stop searching if complete paths already exist which are shorter
+            if len(shortest_complete_paths) > 0:
+                if len(shortest_complete_paths[0]) <= len(current_path):
+                    break
+            # Extend the path in each direction
             (x, y) = current_path[-1]
             next_steps = [(x, y-1), (x-1, y), (x+1, y), (x, y+1)]
             for ns in next_steps:
@@ -101,14 +114,18 @@ class Character:
                 if self.grid[ns[1]][ns[0]] == [".", None] and ns not in visited:
                     updated_path = current_path + [ns]
                     if ns in target_range_tiles:
-                        # Return if a target is found, since this will be the shortest so far
-                        return updated_path
+                        # Add to the shortest completed paths so far
+                        shortest_complete_paths.append(updated_path)
                     else:
                         # Otherwise add to the list of paths to extend
                         q.put(updated_path)
                         visited.add(ns)
-        # Return None since the heap ran out without returning a path
-        return None
+        if len(shortest_complete_paths) > 0:
+            # Return the first path after sorting by the lowest reading order of the end position then the start position
+            return sorted(shortest_complete_paths, key=lambda p: (p[-1][1], p[-1][0], p[1][1], p[1][0]))[0]
+        else:
+            # Return None since the heap ran out without finding a complete path
+            return None
 
     def move_to(self, x, y):
         """Process a move"""
@@ -138,70 +155,108 @@ class Character:
         self.attack()
 
 
-# Grid is a 2d array of lists, each with "#" or "." and None or a character
-grid = []
-with open("input.txt", "r") as f:
-    for y, line in enumerate(f):
-        row = []
-        for x, c in enumerate(line.rstrip()):
-            if c in "#.":
-                # Add to the grid
-                row.append([c, None])
-            elif c in "GE":
-                # Create a character
-                character = Character(x, y, c, grid)
-                row.append(['.', character])
-        grid.append(row)       
+def load_data(filename, elf_attack_power=3):
+    """Load data as a 2d array of lists, each with "#" or "." and None or a character"""
+    grid = []
+    character_num = 0
+    with open(filename, "r") as f:
+        for y, line in enumerate(f):
+            row = []
+            for x, c in enumerate(line.rstrip()):
+                if c in "#.":
+                    # Add to the grid
+                    row.append([c, None])
+                elif c in "GE":
+                    # Create a character
+                    character = Character(character_num, x, y, c, elf_attack_power, grid)
+                    character_num += 1
+                    row.append(['.', character])
+            grid.append(row)
+    return grid
 
 def print_grid(grid, show_characters=False):
     # Create sorted copy of characters
     for row in grid:
+        row_str = "".join([t[0] if t[1] is None else t[1].kind for t in row])
         if show_characters:
-            print("".join([t[0] if t[1] is None else t[1].kind for t in row]))
-        else:
-            print("".join([t[0] for t in row]))
-
-print_grid(grid, True)
-
+            char_str = ", ".join([f"{c.kind}({c.hitpoints})" for t, c in row if c is not None])
+            row_str += "\t" + char_str
+        print(row_str)
 
 def process_battle(grid):
+    """Assume the battle can't end in a stalemate"""
     completed_rounds = 0
     while True:
-        # Get ordered list of characters at the start of the round
-        characters = []
+        # Get ordered list of character indexes at the start of the round
+        character_idxs = []
         for row in grid:
-            for (_, character) in row:
-                if character is not None:
-                    characters.append(character)
+            for (t, c) in row:
+                if c is not None:
+                    character_idxs.append(c.idx)
         # Process characters
-        for character in characters:
+        for c_idx in character_idxs:
+            # Get current state of character
+            character = None
+            for row in grid:
+                for t, c in row:
+                    if c is not None:
+                        if c.idx == c_idx:
+                            character = c
+                            break
+            if character is None:
+                continue
             # Check if targets are left, if not return the number of completed rounds
             targets_left = character.find_targets()
             if len(targets_left) == 0:
                 return grid, completed_rounds
             character.take_turn()
         completed_rounds += 1
-    return grid, completed_rounds
+
+def calculate_answer(grid, completed_rounds):
+    remaining_hp = 0
+    for row in grid:
+        for (tile, character) in row:
+            if character is not None:
+                remaining_hp += character.hitpoints
+    print(f"{completed_rounds} Completed Rounds, {remaining_hp} remaining HP")
+    return completed_rounds * remaining_hp
 
 ##############
 # Solution 1 #
 ##############
-
+grid = load_data("input.txt")
 grid, completed_rounds = process_battle(grid)
-
-# TODO
-remaining_hp = 0
-for row in grid:
-    for (tile, character) in row:
-        if character is not None:
-            remaining_hp += character.hitpoints
-
-answer = completed_rounds * remaining_hp
+answer = calculate_answer(grid, completed_rounds)
 print(f"Solution to part 1 is {answer}")
 
 ##############
 # Solution 2 #
 ##############
 
-answer = ""
+def count_elves(grid):
+    elf_count = 0
+    for row in grid:
+        for t, c in row:
+            if c is not None:
+                if c.kind == "E":
+                    elf_count += 1
+    return elf_count
+
+elf_attack_power = 3
+rip_elf = True
+while rip_elf:
+    # Boost attack power
+    elf_attack_power += 1
+    # Load data and count the starting number of elves
+    grid = load_data("input.txt", elf_attack_power=elf_attack_power)
+    starting_elf_number = count_elves(grid)
+    # Process the battle and count how many elves died
+    grid, completed_rounds = process_battle(grid)
+    n_elves_died = starting_elf_number - count_elves(grid)
+    print(f"\t{n_elves_died} elves died with attack power {elf_attack_power}")
+    # Stop increasing power if no elves died
+    if n_elves_died == 0:
+        rip_elf = False
+
+answer = calculate_answer(grid, completed_rounds)
 print(f"Solution to part 2 is {answer}")
